@@ -134,7 +134,8 @@ public class Hooks extends DefaultLogger {
         propertyLoader.reloadProperties(environment + ".properties");
 
         Constants.BASE_URL = propertyLoader.get("base.url");
-        Constants.LOGIN_URL = Constants.BASE_URL + "/login";
+        Constants.LOGIN_URL = Constants.BASE_URL + "/sign_in";
+//        Constants.LOGIN_URL = Constants.BASE_URL + "/login";
 
         String passwordForUser;
 

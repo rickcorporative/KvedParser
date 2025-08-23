@@ -23,8 +23,13 @@ public class HomeStepDefinitions extends DefaultLogger {
         Sites.yourControlPages().homePage().typeIntoInput(value);
     }
 
-    @When(siteName + "Parse announcements")
-    public void parseAnnounce(){
-        Sites.yourControlPages().homePage().parse();
+    @When(siteName + "Parse kved {string} announcements with query {string} on page {int} product {int}")
+    public void parseAnnounce(String kved, String query, int page, int product){
+        Sites.yourControlPages().homePage().parse(kved, query, page, product);
+    }
+
+    @When(siteName + "Close banner")
+    public void closeBannerStep(){
+        Sites.yourControlPages().homePage().clickCross();
     }
 }

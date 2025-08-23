@@ -6,11 +6,14 @@ import com.demo.utils.Constants;
 import com.demo.utils.LocatorParser;
 import com.demo.utils.PlaywrightTools;
 import com.microsoft.playwright.*;
+import com.microsoft.playwright.options.BoundingBox;
+import com.microsoft.playwright.options.MouseButton;
 import com.microsoft.playwright.options.WaitForSelectorState;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
@@ -415,4 +418,80 @@ public class PageTools extends DefaultLogger {
         logInfo(methodName + ", element --> " + parsedLocator);
         return extractor.apply(parsedLocator);
     }
+
+    /**
+     * Human-like methods
+     */
+    protected void humanPause(int minMs, int maxMs) {
+        int delay = ThreadLocalRandom.current().nextInt(minMs, maxMs + 1);
+        try {
+            if (ThreadLocalRandom.current().nextInt(100) < 40) {
+                randomMouseAndScroll();
+            }
+            Thread.sleep(delay);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    protected void humanClick(Locator locator) {
+        try {
+            locator.scrollIntoViewIfNeeded();
+            locator.hover();
+            Thread.sleep(ThreadLocalRandom.current().nextInt(200, 700));
+
+            // 30% случаев — кликаем с небольшим смещением
+            if (ThreadLocalRandom.current().nextInt(100) < 30) {
+                BoundingBox box = locator.boundingBox();
+                if (box != null) {
+                    double offsetX = ThreadLocalRandom.current().nextDouble(3, Math.max(4, Math.min(12, box.width / 6)));
+                    double offsetY = ThreadLocalRandom.current().nextDouble(3, Math.max(4, Math.min(12, box.height / 6)));
+                    getPage().mouse().move(box.x + box.width / 2 + offsetX, box.y + box.height / 2 + offsetY);
+                    Thread.sleep(ThreadLocalRandom.current().nextInt(120, 400));
+                }
+            }
+
+            if (ThreadLocalRandom.current().nextInt(100) < 20) {
+                locator.dispatchEvent("mousedown");
+                Thread.sleep(ThreadLocalRandom.current().nextInt(60, 180));
+                locator.dispatchEvent("mouseup");
+            } else {
+                locator.click(new Locator.ClickOptions().setButton(MouseButton.LEFT));
+            }
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            locator.click();
+        }
+    }
+
+    protected void randomMouseAndScroll() {
+        var vp = getPage().viewportSize();
+        int vw = (vp != null ? vp.width : 1366);
+        int vh = (vp != null ? vp.height : 768);
+
+        int x1 = ThreadLocalRandom.current().nextInt(80, Math.max(120, vw - 80));
+        int y1 = ThreadLocalRandom.current().nextInt(100, Math.max(160, vh - 100));
+        int x2 = ThreadLocalRandom.current().nextInt(80, Math.max(120, vw - 80));
+        int y2 = ThreadLocalRandom.current().nextInt(100, Math.max(160, vh - 100));
+
+        int steps = ThreadLocalRandom.current().nextInt(2, 5);
+        for (int s = 1; s <= steps; s++) {
+            double t = (double) s / steps;
+            double cx = x1 + (x2 - x1) * t;
+            double cy = y1 + (y2 - y1) * t;
+            getPage().mouse().move(cx, cy);
+            try {
+                Thread.sleep(ThreadLocalRandom.current().nextInt(40, 120));
+            } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+        }
+
+        int dy = ThreadLocalRandom.current().nextInt(120, 480);
+        if (ThreadLocalRandom.current().nextInt(100) < 40) dy = -dy;
+        getPage().mouse().wheel(0, dy);
+    }
+
+    protected String safe(String value) {
+        return value == null ? "" : value.trim();
+    }
+
 }

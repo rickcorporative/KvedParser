@@ -19,4 +19,5 @@ public class Constants {
     public static int SCREEN_HEIGHT;
 
     public static int TIMEOUT_BEFORE_FAIL;
+
 }

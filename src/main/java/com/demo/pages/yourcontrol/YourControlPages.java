@@ -8,6 +8,7 @@ public class YourControlPages extends DefaultLogger {
      */
     private static HomePage homePage;
     private static CompanyPage companyPage;
+    private static LoginPage loginPage;
 
     /**
      * This function return an instance of `HomePage`
@@ -27,5 +28,15 @@ public class YourControlPages extends DefaultLogger {
             companyPage = new CompanyPage();
         }
         return companyPage;
+    }
+
+    /**
+     * This function return an instance of `LoginPage`
+     */
+    public static LoginPage loginPage(){
+        if(loginPage == null) {
+            loginPage = new LoginPage();
+        }
+        return loginPage;
     }
 }
