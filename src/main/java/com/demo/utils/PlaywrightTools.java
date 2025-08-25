@@ -1,6 +1,6 @@
 package com.demo.utils;
 
-import com.demo.core.config.PlaywrightConfig;
+import com.demo.core.runtime.RunContext;
 import com.microsoft.playwright.Frame;
 import com.microsoft.playwright.Page;
 import io.qameta.allure.Step;
@@ -13,7 +13,11 @@ public class PlaywrightTools {
     protected static final Logger LOG = LoggerFactory.getLogger(PlaywrightTools.class);
 
     private static Page getPage() {
-        return PlaywrightConfig.getPage();
+        Page p = RunContext.getPage();
+        if (p == null) {
+            throw new IllegalStateException("❌ Page is null. Убедитесь, что Hooks.beforeScenario создал страницу и вызвал RunContext.set(page, context).");
+        }
+        return p;
     }
 
     public static List<Page> getTabsList() {
@@ -74,9 +78,8 @@ public class PlaywrightTools {
     public static void switchToFirstTab() {
         LOG.info("Switching to first tab...");
         List<Page> tabs = getTabsList();
-        if(tabs.size() != 1) {
-            Page lastPage = tabs.get(0);
-            PlaywrightConfig.setPage(lastPage);
+        if (!tabs.isEmpty()) {
+            RunContext.set(tabs.get(0), RunContext.getContext());
         }
     }
 
@@ -85,7 +88,7 @@ public class PlaywrightTools {
         LOG.info("Switching to last tab...");
         List<Page> tabs = getTabsList();
         Page lastPage = tabs.get(tabs.size() - 1);
-        PlaywrightConfig.setPage(lastPage);
+        RunContext.set(lastPage, RunContext.getContext());
     }
 
     @Step("Open url in new window")
@@ -93,7 +96,7 @@ public class PlaywrightTools {
         LOG.info("Open url in new window");
         Page newPage = getPage().context().newPage();
         newPage.navigate(url);
-        PlaywrightConfig.setPage(newPage);
+        RunContext.set(newPage, RunContext.getContext());
     }
 
     public static void closeAllTabsExceptCurrent() {

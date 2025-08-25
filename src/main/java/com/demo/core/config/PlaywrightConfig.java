@@ -1,11 +1,10 @@
+// src/main/java/com/demo/core/config/PlaywrightConfig.java
 package com.demo.core.config;
 
-import com.demo.utils.Constants;
-import com.demo.utils.PlaywrightTools;
 import com.microsoft.playwright.*;
-import com.microsoft.playwright.BrowserType.LaunchOptions;
 import com.microsoft.playwright.options.RecordVideoSize;
 import com.microsoft.playwright.options.ViewportSize;
+import com.demo.utils.Constants;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -14,66 +13,63 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 
-public class PlaywrightConfig {
-    private static final ThreadLocal<Browser> browserThreadLocal = new ThreadLocal<>();
-    private static final ThreadLocal<BrowserContext> contextThreadLocal = new ThreadLocal<>();
-    private static final ThreadLocal<Page> pageThreadLocal = new ThreadLocal<>();
-    private static final ThreadLocal<APIRequest> apiRequestThreadLocal = new ThreadLocal<>();
-    private static final ThreadLocal<String> scenarioNameThreadLocal = new ThreadLocal<>();
+public final class PlaywrightConfig {
 
-    // ⚙️ реюз storageState можно включить системным флагом: -DstorageState=true
+    // ===== ВРЕМЕННАЯ ОБРАТНАЯ СОВМЕСТИМОСТЬ: делегаты в RunContext =====
+    public static com.microsoft.playwright.Page getPage() {
+        return com.demo.core.runtime.RunContext.getPage();
+    }
+    public static com.microsoft.playwright.BrowserContext getContext() {
+        return com.demo.core.runtime.RunContext.getContext();
+    }
+    public static void setPage(com.microsoft.playwright.Page page) {
+        com.microsoft.playwright.BrowserContext ctx = com.demo.core.runtime.RunContext.getContext();
+        com.demo.core.runtime.RunContext.set(page, ctx);
+    }
+    public static void setContext(com.microsoft.playwright.BrowserContext ctx) {
+        com.microsoft.playwright.Page page = com.demo.core.runtime.RunContext.getPage();
+        com.demo.core.runtime.RunContext.set(page, ctx);
+    }
+
+
+    private PlaywrightConfig() {}
+
+    // ⚙️ Реюз storageState можно включить флагом: -DstorageState=true
     private static final boolean STORAGE_STATE_ENABLED =
             Boolean.parseBoolean(System.getProperty("storageState", "false"));
     private static final Path STATE_PATH = Paths.get("target/storageState.json");
 
-    private static final double timeoutTime = Constants.TIMEOUT_BEFORE_FAIL * 1000;
+    private static final double TIMEOUT_MS = Constants.TIMEOUT_BEFORE_FAIL * 1000.0;
 
-    // ---------- lifecycle ----------
-    public static void createBrowserConfig() {
-        getBrowser();
-        getContext();
-        getPage();
-    }
+    // ========= ФАБРИЧНЫЕ МЕТОДЫ (без хранения состояния) =========
 
-    public static Browser getBrowser() {
-        Browser existing = browserThreadLocal.get();
-        if (existing != null) return existing;
-
-        boolean isHeadless = ThreadLocalRandom.current().nextInt(100) < 70;
+    /** Создаёт новый Browser с детерминированными опциями */
+    public static Browser createBrowser(Playwright pw) {
         String browserType = System.getProperty("playwright.browser", "chrome");
+        boolean headless = Boolean.parseBoolean(System.getProperty("headless", "true"));
 
-        LaunchOptions options = new LaunchOptions()
-                .setHeadless(isHeadless)
+        BrowserType.LaunchOptions options = new BrowserType.LaunchOptions()
+                .setHeadless(headless)
                 .setArgs(List.of(
                         "--disable-notifications",
                         "--start-maximized",
                         "--window-size=" + Constants.SCREEN_WIDTH + "," + Constants.SCREEN_HEIGHT
                 ))
-                .setTimeout(timeoutTime);
+                .setTimeout(TIMEOUT_MS);
 
-        Browser browser = switch (browserType.toLowerCase()) {
-            case "chrome" -> {
-                options.setChannel("chrome");
-                yield PlaywrightHolder.get().chromium().launch(options);
-            }
-            case "firefox" -> PlaywrightHolder.get().firefox().launch(options);
+        return switch (browserType.toLowerCase()) {
+            case "chrome" -> pw.chromium().launch(options.setChannel("chrome"));
+            case "firefox" -> pw.firefox().launch(options);
             default -> throw new IllegalArgumentException("Unsupported browser: " + browserType);
         };
-
-        browserThreadLocal.set(browser);
-        return browser;
     }
 
-    public static BrowserContext getContext() {
-        BrowserContext ctx = contextThreadLocal.get();
-        if (ctx != null) return ctx; // в Java API нет isClosed() у BrowserContext
 
-        String scenarioName = getScenarioName();
-        Path videoDir = Paths.get("target/videos",
-                scenarioName != null ? scenarioName : Thread.currentThread().getName());
+    /** Создаёт новый BrowserContext со всеми антидетект-настройками и видео-папкой по сценарию */
+    public static BrowserContext createContext(Browser browser, String scenarioName) {
         ThreadLocalRandom rnd = ThreadLocalRandom.current();
 
-        // — weighted pools —
+        // локации/таймзоны с весами
         String[][] WEIGHTED_LOCALES = {
                 {"uk-UA","5"}, {"ru-RU","4"}, {"en-US","3"}, {"pl-PL","2"}, {"de-DE","2"},
                 {"fr-FR","1"}, {"es-ES","1"}, {"it-IT","1"}, {"nl-NL","1"}, {"ro-RO","1"},
@@ -121,6 +117,9 @@ public class PlaywrightConfig {
         String platform = rnd.nextInt(100) < 85 ? "Win32" : "MacIntel";
         int hwThreads = choose(rnd, new int[]{4,6,8,12});
 
+        Path videoDir = Paths.get("target/videos",
+                scenarioName != null && !scenarioName.isEmpty() ? scenarioName : Thread.currentThread().getName());
+
         Browser.NewContextOptions contextOptions = new Browser.NewContextOptions()
                 .setViewportSize(new ViewportSize(vw, vh))
                 .setRecordVideoSize(new RecordVideoSize(vw, vh))
@@ -135,15 +134,14 @@ public class PlaywrightConfig {
                         "DNT", "1"
                 ));
 
-        // 🔒 Реюз стейта — ТОЛЬКО если включено флагом
         if (STORAGE_STATE_ENABLED && Files.exists(STATE_PATH)) {
             contextOptions.setStorageStatePath(STATE_PATH);
         }
 
-        BrowserContext context = getBrowser().newContext(contextOptions);
+        BrowserContext context = browser.newContext(contextOptions);
 
-        // init-scripts (антидетект)
-        context.addInitScript("""
+        // антидетект init-script
+        context.addInitScript(String.format("""
             Object.defineProperty(navigator,'webdriver',{get:()=>undefined});
             Object.defineProperty(navigator,'languages',{get:()=>['%s','%s'.split('-')[0],'en-US','en']});
             Object.defineProperty(navigator,'plugins',{get:()=>[1,2,3,4]});
@@ -157,82 +155,37 @@ public class PlaywrightConfig {
                 return gp.call(this,p);
               };
             })();
-        """.formatted(locale, locale, platform, hwThreads));
+        """, locale, locale, platform, hwThreads));
 
-        contextThreadLocal.set(context);
         return context;
     }
 
-    public static Page getPage() {
-        Page p = pageThreadLocal.get();
-        if (p == null || p.isClosed()) {
-            BrowserContext ctx = getContext();
-            p = ctx.newPage();
-            p.setDefaultTimeout(timeoutTime);
-            pageThreadLocal.set(p);
-        }
+    /** Создаёт новую страницу и проставляет дефолтные таймауты */
+    public static Page createPage(BrowserContext context) {
+        Page p = context.newPage();
+        p.setDefaultTimeout(TIMEOUT_MS);
+        p.setDefaultNavigationTimeout(Math.max(15000, (long) TIMEOUT_MS));
         return p;
     }
 
-    public static void setPage(Page newPage) {
-        pageThreadLocal.set(newPage);
-    }
-
-    public synchronized static APIRequest getAPIRequestContextNew() {
-        Playwright playwright = PlaywrightHolder.get();
-        if (playwright == null) {
-            throw new IllegalStateException("Playwright not initialized. Call Playwright.create() first.");
+    /** Сохраняет storageState (если включено системным флагом) — вызывать в @After при необходимости */
+    public static void maybeSaveStorageState(BrowserContext context) {
+        if (!STORAGE_STATE_ENABLED || context == null) return;
+        try {
+            context.storageState(new BrowserContext.StorageStateOptions().setPath(STATE_PATH));
+        } catch (Throwable t) {
+            t.printStackTrace();
         }
-        if (apiRequestThreadLocal.get() == null)
-            apiRequestThreadLocal.set(playwright.request());
-        return apiRequestThreadLocal.get();
     }
 
-    public synchronized static void closeBrowser() {
-        boolean holdBrowserOpen = Boolean.parseBoolean(System.getProperty("holdBrowserOpen", "false"));
-        if (holdBrowserOpen) {
-            PlaywrightTools.sleep(Constants.BIG_TIMEOUT * 25);
-        }
-
-        BrowserContext context = contextThreadLocal.get();
-        if (context != null) {
-            // 💾 Сохраняем стейт ТОЛЬКО если включено
-            if (STORAGE_STATE_ENABLED) {
-                try {
-                    context.storageState(new BrowserContext.StorageStateOptions().setPath(STATE_PATH));
-                } catch (Throwable t) { t.printStackTrace(); }
-            }
-            try { context.close(); } catch (Throwable ignore) {}
-        }
-        contextThreadLocal.remove();
-
-        Browser browser = browserThreadLocal.get();
-        if (browser != null) {
-            try { browser.close(); } catch (Throwable ignore) {}
-        }
-        browserThreadLocal.remove();
-
-        apiRequestThreadLocal.remove();
-        pageThreadLocal.remove();
-        scenarioNameThreadLocal.remove();
-    }
-
-    public static void setScenarioName(String name) {
-        scenarioNameThreadLocal.set(name);
-    }
-
-    public static String getScenarioName() {
-        return scenarioNameThreadLocal.get();
-    }
-
-    // 🔨 утилита: вручную стереть сохранённый стейт (если вдруг включали)
+    /** Удалить сохранённый storageState вручную */
     public static void deleteStorageState() {
         try {
             if (Files.exists(STATE_PATH)) Files.delete(STATE_PATH);
         } catch (Exception ignore) {}
     }
 
-    // ---------- helpers ----------
+    // ====== helpers ======
     private static String pickWeighted(String[][] items, ThreadLocalRandom rnd) {
         int sum = 0;
         for (String[] it : items) sum += Integer.parseInt(it[1]);

@@ -1,7 +1,7 @@
 package com.demo.core.base;
 
 import com.demo.core.logger.DefaultLogger;
-import com.demo.core.config.PlaywrightConfig;
+import com.demo.core.runtime.RunContext;
 import com.demo.utils.Constants;
 import com.demo.utils.LocatorParser;
 import com.demo.utils.PlaywrightTools;
@@ -17,20 +17,18 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
-
 public class PageTools extends DefaultLogger {
-    private final Page page;
 
-    public PageTools() {
-        this.page = PlaywrightConfig.getPage();
-    }
+    // ---- Больше НЕ храним Page в поле, чтобы не держать ссылку на закрытую страницу ----
+    public PageTools() { }
+    public PageTools(Page ignored) { } // оставлен для совместимости со старыми вызовами
 
-    public PageTools(Page page) {
-        this.page = page;
-    }
-
-    protected Page getPage() {
-        return page;
+    public static Page getPage() {
+        Page p = RunContext.getPage();
+        if (p == null || p.isClosed()) {
+            throw new IllegalStateException("❌ Page is null or closed. Убедись, что Hooks.beforeScenario вызвал RunContext.set(page, context).");
+        }
+        return p;
     }
 
     private static String getPreviousMethodNameAsText() {
@@ -47,7 +45,7 @@ public class PageTools extends DefaultLogger {
     }
 
     private Locator byLocator(String by, Object... args) {
-        return LocatorParser.parseLocator(page, by, args);
+        return LocatorParser.parseLocator(getPage(), by, args);
     }
 
     /**
@@ -231,7 +229,7 @@ public class PageTools extends DefaultLogger {
                 return true;
             }
             try {
-                Thread.sleep(1000); // ждём 1 секунду
+                Thread.sleep(1000);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return false;
@@ -249,7 +247,7 @@ public class PageTools extends DefaultLogger {
                     logInfo("First element is visible after " + i + " seconds");
                     return true;
                 }
-                PlaywrightTools.sleep(Constants.NANO_TIMEOUT); // у тебя уже есть этот helper
+                PlaywrightTools.sleep(Constants.NANO_TIMEOUT);
             }
             logInfo("First element is not visible after " + seconds + " seconds");
             return false;
@@ -280,15 +278,15 @@ public class PageTools extends DefaultLogger {
         logInfo(getPreviousMethodNameAsText() + ", element --> " + parsedLocator);
 
         try {
-        for (int i = 0; i < seconds; i++) {
-            if (parsedLocator.first().isVisible()) {
-                logInfo("Element is visible after " + i + " seconds");
-                return true;
+            for (int i = 0; i < seconds; i++) {
+                if (parsedLocator.first().isVisible()) {
+                    logInfo("Element is visible after " + i + " seconds");
+                    return true;
+                }
+                PlaywrightTools.sleep(Constants.NANO_TIMEOUT);
             }
-            PlaywrightTools.sleep(Constants.NANO_TIMEOUT);
-        }
-        logInfo("Element is not visible after " + seconds + " seconds");
-        return false;
+            logInfo("Element is not visible after " + seconds + " seconds");
+            return false;
         } catch (PlaywrightException e) {
             if (e.getMessage().contains("Object doesn't exist")) {
                 logInfo("Element already removed: " + selector);
@@ -323,24 +321,24 @@ public class PageTools extends DefaultLogger {
     }
 
     protected String getElementAttributeValue(String attr, String selector, Object... args) {
-        return extractFromLocator(getPreviousMethodNameAsText(), selector, args, locator -> locator.getAttribute(attr));
+        return extractFromLocator(getPreviousMethodNameAsText(), selector, args, l -> l.getAttribute(attr));
     }
 
     protected String getHiddenElementAttributeValue(String attr, String selector, Object... args) {
-        return extractFromLocator(getPreviousMethodNameAsText(), selector, args, locator -> {
-            if (!locator.isHidden()) {
+        return extractFromLocator(getPreviousMethodNameAsText(), selector, args, l -> {
+            if (!l.isHidden()) {
                 throw new AssertionError("Element is not hidden");
             }
-            return locator.getAttribute(attr);
+            return l.getAttribute(attr);
         });
     }
 
     protected String getDisabledElementAttributeValue(String attr, String selector, Object... args) {
-        return extractFromLocator(getPreviousMethodNameAsText(), selector, args, locator -> {
-            if (!locator.isDisabled()) {
+        return extractFromLocator(getPreviousMethodNameAsText(), selector, args, l -> {
+            if (!l.isDisabled()) {
                 throw new AssertionError("Element is not disabled");
             }
-            return locator.getAttribute(attr);
+            return l.getAttribute(attr);
         });
     }
 
@@ -366,7 +364,7 @@ public class PageTools extends DefaultLogger {
     protected void scrollToPlaceElementInCenter(String selector, Object... args) {
         Locator locator = byLocator(selector, args);
         logInfo(getPreviousMethodNameAsText() + ", element --> " + locator);
-        page.evaluate("el => el.scrollIntoView({block: 'center'})", locator);
+        getPage().evaluate("el => el.scrollIntoView({block: 'center'})", locator);
     }
 
     protected ElementHandle getWebElement(String selector, Object... args) {
@@ -375,12 +373,12 @@ public class PageTools extends DefaultLogger {
     }
 
     /**
-     * Work with colors
+     * Downloads
      */
     protected Path downloadFile(String selector, Object... args) {
         try {
             Locator locator = byLocator(selector, args);
-            Download download = page.waitForDownload(locator::click);
+            Download download = getPage().waitForDownload(locator::click);
             return download.path();
         } catch (Exception e) {
             logError("Failed to download file using selector '{}'", e, selector);
@@ -391,12 +389,11 @@ public class PageTools extends DefaultLogger {
     /**
      * Private methods
      */
-
     private boolean checkLocatorState(String methodName, String selector, Object[] args, Function<Locator, Boolean> stateCheck) {
         Locator parsedLocator = byLocator(selector, args);
         logInfo(methodName + ", element --> " + parsedLocator);
         try {
-        return stateCheck.apply(parsedLocator);
+            return stateCheck.apply(parsedLocator);
         } catch (PlaywrightException e) {
             if (e.getMessage().contains("Object doesn't exist")) {
                 logInfo("Element already removed: " + selector);
@@ -440,7 +437,6 @@ public class PageTools extends DefaultLogger {
             locator.hover();
             Thread.sleep(ThreadLocalRandom.current().nextInt(200, 700));
 
-            // 30% случаев — кликаем с небольшим смещением
             if (ThreadLocalRandom.current().nextInt(100) < 30) {
                 BoundingBox box = locator.boundingBox();
                 if (box != null) {
@@ -493,5 +489,4 @@ public class PageTools extends DefaultLogger {
     protected String safe(String value) {
         return value == null ? "" : value.trim();
     }
-
 }
