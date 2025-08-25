@@ -8,22 +8,18 @@ import com.microsoft.playwright.Locator;
 import com.microsoft.playwright.Page;
 import io.qameta.allure.Step;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.List;
-import java.util.Objects;
-import java.util.Random;
-import java.util.concurrent.ThreadLocalRandom;
+import java.util.*;
 
 public class HomePage extends PageTools {
     private String input = "//input[@id='q']";
     private String searchButton = "//button[@id='search-submit']";
-    private String searchItemBlocks = "//div[@class='search-item-block']";
-    private String companyLink = "//a[contains(@href,'contractor')]";
+    private String companyBlock = "//div[@class='search-item-block']";
+    private String companyLink = "//a[contains(@href, 'contractor/')]";
+    private String companyKved = "//div[@id='activity-qa']";
     private String filterKvedSelect = "//button[text()='Види діяльності']";
     private String kvedOption = "//label[@title='%s']";
     private String cross = "//span[contains(@class, 'mdi mdi-close yc-dialog-close')]";
+    private String[] requiredKveds = {"10.71", "10.72", "56.10", "56.30", "47.11", "47.29", "47.25", "96.09", "52.11.0", "55.30.2"};
 
     @Step("Open home page")
     public void openHomePage() {
@@ -80,7 +76,7 @@ public class HomePage extends PageTools {
                 System.out.println("Navigating to: " + nextUrl);
                 getPage().navigate(nextUrl);
 
-                Locator resultBlocks = getPage().locator(searchItemBlocks);
+                Locator resultBlocks = getPage().locator(companyBlock);
                 int count = resultBlocks.count();
 
                 if (count == 0) {
@@ -92,44 +88,58 @@ public class HomePage extends PageTools {
                 for (int i = startIndex; i < count && processed < limit; i++) {
                     Locator block = resultBlocks.nth(i);
                     Locator link = block.locator("xpath=." + companyLink);
+                    int companyTypeIndex = i + 1;
 
-                    if (link.isVisible()) {
-                        String href = link.getAttribute("href");
-                        if (href != null) {
-                            if (href.startsWith("/")) {
-                                String baseUrl = getPage().url().split("/", 4)[0] + "//" +
-                                        getPage().url().split("/", 4)[2];
-                                href = baseUrl + href;
+                    String companyType = "((" + companyBlock + ")[" + companyTypeIndex + "])" + companyKved;
+
+                    if (isElementVisibleCheckEverySecond(companyType, 1)) {
+                        String companyTypeText = getElementInnerText(companyType);
+                        for (int j = 0; j < requiredKveds.length; j++) {
+                            if (companyTypeText.contains(requiredKveds[j])) {
+                                logInfo("Description of next company is " + requiredKveds[j] + ". Opening page...");
+                                if (link.isVisible()) {
+                                    String href = link.getAttribute("href");
+                                    if (href != null) {
+                                        if (href.startsWith("/")) {
+                                            String baseUrl = getPage().url().split("/", 4)[0] + "//" +
+                                                    getPage().url().split("/", 4)[2];
+                                            href = baseUrl + href;
+                                        }
+
+                                        // Задержка перед открытием компании
+                                        humanPause(1000, 3000);
+
+                                        logInfo("-------Start processing company------");
+                                        Page newPage = getPage().context().newPage();
+                                        newPage.navigate(href);
+
+                                        CompanyPage companyPage = new CompanyPage(newPage);
+
+                                        String fullName   = companyPage.getCompanyFullName();
+                                        String shortName  = companyPage.getCompanyShortName();
+                                        String erdpou     = companyPage.getEdrpou();
+                                        String location   = companyPage.getCompanyLocation();
+                                        String managerName= companyPage.getManagerName();
+                                        String phones     = companyPage.getCompanyPhone();
+
+                                        // 📌 Записываем строку в CSV
+                                        csv.writeRow(fullName, shortName, managerName,
+                                                phones, erdpou, location, href);
+                                        csv.flush(); // ✅ сразу сохраняем строку
+
+                                        newPage.close();
+
+                                        processed++;
+                                        System.out.println("✅ Обработано компаний: " + processed);
+
+                                        // Пауза после компании
+                                        humanPause(1000, 3000);
+                                    }
+                                }
                             }
-
-                            // Задержка перед открытием компании
-                            humanPause(1000, 3000);
-
-                            Page newPage = getPage().context().newPage();
-                            newPage.navigate(href);
-
-                            CompanyPage companyPage = new CompanyPage(newPage);
-
-                            String fullName   = companyPage.getCompanyFullName();
-                            String shortName  = companyPage.getCompanyShortName();
-                            String erdpou     = companyPage.getEdrpou();
-                            String location   = companyPage.getCompanyLocation();
-                            String managerName= companyPage.getManagerName();
-                            String phones     = companyPage.getCompanyPhone();
-
-                            // 📌 Записываем строку в CSV
-                            csv.writeRow(fullName, shortName, managerName,
-                                    phones, erdpou, location, href);
-                            csv.flush(); // ✅ сразу сохраняем строку
-
-                            newPage.close();
-
-                            processed++;
-                            System.out.println("✅ Обработано компаний: " + processed);
-
-                            // Пауза после компании
-                            humanPause(1000, 3000);
                         }
+                    } else {
+                        logInfo("Description of next company is not visible. Skipping it...");
                     }
                 }
 

@@ -51,8 +51,8 @@ public class CompanyPage extends PageTools {
     @Step("Get manager name")
     public String getManagerName() {
         try {
-            if (!isFirstElementVisibleCheckEverySecond(managerField, 2)) {
-                return "";
+            if (!isFirstElementVisibleCheckEverySecond(managerField, 1)) {
+                return "Нет имени руководителя";
             }
             List<String> managers = cleanDistinct(getElementsText(managerField));
             return managers.isEmpty() ? "" : String.join("; ", managers);
@@ -64,7 +64,9 @@ public class CompanyPage extends PageTools {
     @Step("Get company location")
     public String getCompanyLocation() {
         try {
-            return norm(getElementInnerText(contactLocator, "Адреса:"));
+            if (isElementVisibleCheckEverySecond(contactLocator,1)) {
+                return norm(getElementInnerText(contactLocator));
+            } return "Нет локации";
         } catch (Exception e) {
             return "Нет локации";
         }
@@ -73,7 +75,9 @@ public class CompanyPage extends PageTools {
     @Step("Get company short name")
     public String getCompanyShortName() {
         try {
-            return norm(getElementInnerText(shortNameLocator));
+            if (isElementVisibleCheckEverySecond(shortNameLocator,1)) {
+                return norm(getElementInnerText(shortNameLocator));
+            } return "Нет сокращенного имени";
         } catch (Exception e) {
             return "Нет сокращенного имени";
         }
@@ -82,7 +86,9 @@ public class CompanyPage extends PageTools {
     @Step("Get company full name")
     public String getCompanyFullName() {
         try {
-            return norm(getElementInnerText(fullNameLocator));
+            if (isElementVisibleCheckEverySecond(fullNameLocator,1)) {
+                return norm(getElementInnerText(fullNameLocator));
+            } return "Нет полного имени";
         } catch (Exception e) {
             return "Нет полного имени";
         }
@@ -91,8 +97,9 @@ public class CompanyPage extends PageTools {
     @Step("Get edrpou")
     public String getEdrpou() {
         try {
-            // используем отдельный локатор, не uniLocator!
-            return norm(getElementInnerText(edrpouLocator)).replaceAll("\\D", "");
+            if (isElementVisibleCheckEverySecond(edrpouLocator,1)) {
+                return norm(getElementInnerText(edrpouLocator));
+            } return "Без ЄДРПОУ";
         } catch (Exception e) {
             return "Без ЄДРПОУ";
         }
@@ -101,7 +108,7 @@ public class CompanyPage extends PageTools {
     @Step("Get company phone(s)")
     public String getCompanyPhone() {
         try {
-            if (!isFirstElementVisibleCheckEverySecond(contactLocator, 2, "Телефон:")) {
+            if (!isFirstElementVisibleCheckEverySecond(contactLocator, 1, "Телефон:")) {
                 return "";
             }
 
