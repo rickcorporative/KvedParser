@@ -12,6 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
+import java.util.Objects;
 import java.util.Random;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -67,8 +68,13 @@ public class HomePage extends PageTools {
                 if (currentUrl.contains("&page=")) {
                     nextUrl = currentUrl.replaceAll("&page=\\d+", "&page=" + pageNum);
                 } else {
-                    nextUrl = currentUrl + "/search/?country=1&q=" + query +
-                            "&k%5B%5D=" + kved + "&t=0&page=" + pageNum;
+                    if (Objects.equals(kved, "")) {
+                        nextUrl = currentUrl + "/search/?country=1&q=" + query + "&s%5B%5D=1&t=0&page=" + pageNum;
+                    } else {
+                        nextUrl = currentUrl + "/search/?country=1&q=" + query +
+                                "&s%5B%5D=1&k%5B%5D=" + kved + "&t=0&page=" + pageNum;
+                    }
+
                 }
 
                 System.out.println("Navigating to: " + nextUrl);

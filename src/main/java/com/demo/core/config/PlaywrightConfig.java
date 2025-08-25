@@ -7,13 +7,11 @@ import com.microsoft.playwright.BrowserType.LaunchOptions;
 import com.microsoft.playwright.options.RecordVideoSize;
 import com.microsoft.playwright.options.ViewportSize;
 
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
 import java.util.Map;
-import java.util.Random;
 import java.util.concurrent.ThreadLocalRandom;
 
 public class PlaywrightConfig {
@@ -23,58 +21,59 @@ public class PlaywrightConfig {
     private static final ThreadLocal<APIRequest> apiRequestThreadLocal = new ThreadLocal<>();
     private static final ThreadLocal<String> scenarioNameThreadLocal = new ThreadLocal<>();
 
+    // ⚙️ реюз storageState можно включить системным флагом: -DstorageState=true
+    private static final boolean STORAGE_STATE_ENABLED =
+            Boolean.parseBoolean(System.getProperty("storageState", "false"));
+    private static final Path STATE_PATH = Paths.get("target/storageState.json");
+
     private static final double timeoutTime = Constants.TIMEOUT_BEFORE_FAIL * 1000;
 
-
+    // ---------- lifecycle ----------
     public static void createBrowserConfig() {
         getBrowser();
         getContext();
         getPage();
     }
 
-    public static Page getPage() {
-        if (pageThreadLocal.get() == null) {
-            pageThreadLocal.set(getContext().newPage());
-            pageThreadLocal.get().setDefaultTimeout(timeoutTime);
-        }
-        return pageThreadLocal.get();
-    }
-
-    public static void setPage(Page newPage) {
-        pageThreadLocal.set(newPage);
-    }
-
     public static Browser getBrowser() {
-        if (browserThreadLocal.get() == null) {
-            boolean isHeadless = ThreadLocalRandom.current().nextInt(100) < 70;
-            String browserType = System.getProperty("playwright.browser", "chrome");
+        Browser existing = browserThreadLocal.get();
+        if (existing != null) return existing;
 
-            LaunchOptions options = new LaunchOptions()
-                    .setHeadless(isHeadless)
-                    .setArgs(List.of("--disable-notifications", "--start-maximized", "--window-size=" + Constants.SCREEN_WIDTH + "," + Constants.SCREEN_HEIGHT))
-                    .setTimeout(timeoutTime);
+        boolean isHeadless = ThreadLocalRandom.current().nextInt(100) < 70;
+        String browserType = System.getProperty("playwright.browser", "chrome");
 
-            browserThreadLocal.set(switch (browserType.toLowerCase()) {
-                case "chrome" -> {
-                    options.setChannel("chrome");
-                    yield PlaywrightHolder.get().chromium().launch(options);
-                }
-                case "firefox" -> PlaywrightHolder.get().firefox().launch(options);
-                default -> throw new IllegalArgumentException("Unsupported browser: " + browserType);
-            });
-        }
-        return browserThreadLocal.get();
+        LaunchOptions options = new LaunchOptions()
+                .setHeadless(isHeadless)
+                .setArgs(List.of(
+                        "--disable-notifications",
+                        "--start-maximized",
+                        "--window-size=" + Constants.SCREEN_WIDTH + "," + Constants.SCREEN_HEIGHT
+                ))
+                .setTimeout(timeoutTime);
+
+        Browser browser = switch (browserType.toLowerCase()) {
+            case "chrome" -> {
+                options.setChannel("chrome");
+                yield PlaywrightHolder.get().chromium().launch(options);
+            }
+            case "firefox" -> PlaywrightHolder.get().firefox().launch(options);
+            default -> throw new IllegalArgumentException("Unsupported browser: " + browserType);
+        };
+
+        browserThreadLocal.set(browser);
+        return browser;
     }
 
     public static BrowserContext getContext() {
-        if (contextThreadLocal.get() != null) return contextThreadLocal.get();
+        BrowserContext ctx = contextThreadLocal.get();
+        if (ctx != null) return ctx; // в Java API нет isClosed() у BrowserContext
 
         String scenarioName = getScenarioName();
-        Path videoDir = Paths.get("target/videos", scenarioName != null ? scenarioName : Thread.currentThread().getName());
-        Path statePath = Paths.get("target/storageState.json");
+        Path videoDir = Paths.get("target/videos",
+                scenarioName != null ? scenarioName : Thread.currentThread().getName());
         ThreadLocalRandom rnd = ThreadLocalRandom.current();
 
-        // --- 1) Пулы с «весами» (больше шансов на UA/UA/EU) ---
+        // — weighted pools —
         String[][] WEIGHTED_LOCALES = {
                 {"uk-UA","5"}, {"ru-RU","4"}, {"en-US","3"}, {"pl-PL","2"}, {"de-DE","2"},
                 {"fr-FR","1"}, {"es-ES","1"}, {"it-IT","1"}, {"nl-NL","1"}, {"ro-RO","1"},
@@ -87,26 +86,20 @@ public class PlaywrightConfig {
                 {"Europe/Vilnius","1"}, {"Europe/Riga","1"}, {"Europe/Tallinn","1"}, {"Europe/Bucharest","1"},
                 {"Europe/Bratislava","1"}, {"Europe/Helsinki","1"}, {"Europe/Stockholm","1"}, {"Europe/Oslo","1"},
                 {"Europe/Copenhagen","1"}, {"Europe/London","1"}, {"Europe/Dublin","1"}
-                // (при желании добавь America/New_York и т.п.)
         };
 
-        // Реалистичные User-Agent’ы (десктоп Chrome/Edge последних релизов)
-        String[] UAS = new String[] {
-                // Win10/11 + Chrome
+        String[] UAS = {
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-                // Win10/11 + Edge
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36 Edg/127.0.0.0",
-                // macOS + Chrome
                 "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"
         };
 
-        String locale = pickWeighted(WEIGHTED_LOCALES, rnd);
+        String locale   = pickWeighted(WEIGHTED_LOCALES, rnd);
         String timezone = pickWeighted(WEIGHTED_TZ, rnd);
-        String userAgent = UAS[rnd.nextInt(UAS.length)];
+        String userAgent= UAS[rnd.nextInt(UAS.length)];
 
-        // Accept-Language согласуем с выбранной локалью
         String acceptLang = switch (locale) {
             case "uk-UA" -> "uk-UA,uk;q=0.9,ru-RU;q=0.8,ru;q=0.7,en-US;q=0.6,en;q=0.5";
             case "ru-RU" -> "ru-RU,ru;q=0.9,uk-UA;q=0.8,uk;q=0.7,en-US;q=0.6,en;q=0.5";
@@ -115,21 +108,18 @@ public class PlaywrightConfig {
             default       -> "en-US,en;q=0.9,ru-RU;q=0.6,uk-UA;q=0.5";
         };
 
-        // Случайный реалистичный viewport (±ноутбуки/десктопы)
-        int vw = choose(rnd, new int[]{1366,1440,1536,1600,1680,1728,1920});
-        int vh = switch (vw) {
+        int vw = choose(rnd, new int[]{1366,1440,1536,1600,1680,1728,1920}) + rnd.nextInt(0, 41);
+        int baseH = switch (vw) {
             case 1366 -> 768;
             case 1440,1536 -> 900;
             case 1600,1680 -> 1050;
             case 1728 -> 1117;
-            default -> 1080; // для 1920
+            default -> 1080;
         };
-        vw += rnd.nextInt(0, 41); // небольшой «шум»
-        vh += rnd.nextInt(0, 31);
+        int vh = baseH + rnd.nextInt(0, 31);
 
-        // Платформа и «железо»
         String platform = rnd.nextInt(100) < 85 ? "Win32" : "MacIntel";
-        int hwThreads = choose(rnd, new int[]{4,6,8,12}); // ядра/потоки
+        int hwThreads = choose(rnd, new int[]{4,6,8,12});
 
         Browser.NewContextOptions contextOptions = new Browser.NewContextOptions()
                 .setViewportSize(new ViewportSize(vw, vh))
@@ -142,53 +132,51 @@ public class PlaywrightConfig {
                 .setTimezoneId(timezone)
                 .setExtraHTTPHeaders(Map.of(
                         "Accept-Language", acceptLang,
-                        "DNT", "1" // Do‑Not‑Track как у части юзеров
+                        "DNT", "1"
                 ));
 
-        if (Files.exists(statePath)) {
-            contextOptions.setStorageStatePath(statePath);
+        // 🔒 Реюз стейта — ТОЛЬКО если включено флагом
+        if (STORAGE_STATE_ENABLED && Files.exists(STATE_PATH)) {
+            contextOptions.setStorageStatePath(STATE_PATH);
         }
 
         BrowserContext context = getBrowser().newContext(contextOptions);
 
-        // --- 2) Init‑скрипты (одним блоком) ---
+        // init-scripts (антидетект)
         context.addInitScript("""
-        // webdriver → undefined
-        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-        // languages
-        Object.defineProperty(navigator, 'languages', { get: () => [ '%s', '%s'.split('-')[0], 'en-US', 'en' ] });
-        // plugins
-        Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3,4] });
-        // platform
-        Object.defineProperty(navigator, 'platform', { get: () => '%s' });
-        // hardwareConcurrency
-        Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => %d });
-        // color scheme (как у большинства)
-        try { matchMedia = () => ({ matches: false }); } catch(e){}
-        // WebGL spoof
-        (() => {
-          const getParameter = WebGLRenderingContext.prototype.getParameter;
-          WebGLRenderingContext.prototype.getParameter = function(param) {
-            if (param === 37445) return 'Intel Inc.';            // UNMASKED_VENDOR_WEBGL
-            if (param === 37446) return 'ANGLE (Intel, Intel(R) UHD Graphics, D3D11)';
-            return getParameter.call(this, param);
-          };
-        })();
+            Object.defineProperty(navigator,'webdriver',{get:()=>undefined});
+            Object.defineProperty(navigator,'languages',{get:()=>['%s','%s'.split('-')[0],'en-US','en']});
+            Object.defineProperty(navigator,'plugins',{get:()=>[1,2,3,4]});
+            Object.defineProperty(navigator,'platform',{get:()=>'%s'});
+            Object.defineProperty(navigator,'hardwareConcurrency',{get:()=>%d});
+            try{ matchMedia = () => ({ matches:false }); }catch(e){}
+            (()=>{ const gp=WebGLRenderingContext.prototype.getParameter;
+              WebGLRenderingContext.prototype.getParameter=function(p){
+                if(p===37445) return 'Intel Inc.';
+                if(p===37446) return 'ANGLE (Intel, Intel(R) UHD Graphics, D3D11)';
+                return gp.call(this,p);
+              };
+            })();
         """.formatted(locale, locale, platform, hwThreads));
-
-        // Сохраняем стейт при закрытии
-        context.onClose(c -> {
-            try {
-                context.storageState(new BrowserContext.StorageStateOptions().setPath(statePath));
-            } catch (Exception e) { e.printStackTrace(); }
-        });
 
         contextThreadLocal.set(context);
         return context;
     }
 
+    public static Page getPage() {
+        Page p = pageThreadLocal.get();
+        if (p == null || p.isClosed()) {
+            BrowserContext ctx = getContext();
+            p = ctx.newPage();
+            p.setDefaultTimeout(timeoutTime);
+            pageThreadLocal.set(p);
+        }
+        return p;
+    }
 
-
+    public static void setPage(Page newPage) {
+        pageThreadLocal.set(newPage);
+    }
 
     public synchronized static APIRequest getAPIRequestContextNew() {
         Playwright playwright = PlaywrightHolder.get();
@@ -201,26 +189,32 @@ public class PlaywrightConfig {
     }
 
     public synchronized static void closeBrowser() {
-        boolean holdBrowserOpen = Boolean.parseBoolean(System.getProperty("holdBrowserOpen", "false")); //For debugging only
+        boolean holdBrowserOpen = Boolean.parseBoolean(System.getProperty("holdBrowserOpen", "false"));
         if (holdBrowserOpen) {
-            PlaywrightTools.sleep(Constants.BIG_TIMEOUT * 25); // Stop for 25*25 = 10~ minutes
+            PlaywrightTools.sleep(Constants.BIG_TIMEOUT * 25);
         }
 
         BrowserContext context = contextThreadLocal.get();
         if (context != null) {
-            context.close();
-            contextThreadLocal.remove();
-
-            Browser browser = browserThreadLocal.get();
-            if (browser != null) {
-                browser.close();
-                browserThreadLocal.remove();
+            // 💾 Сохраняем стейт ТОЛЬКО если включено
+            if (STORAGE_STATE_ENABLED) {
+                try {
+                    context.storageState(new BrowserContext.StorageStateOptions().setPath(STATE_PATH));
+                } catch (Throwable t) { t.printStackTrace(); }
             }
-
-            apiRequestThreadLocal.remove();
-            pageThreadLocal.remove();
-            scenarioNameThreadLocal.remove();
+            try { context.close(); } catch (Throwable ignore) {}
         }
+        contextThreadLocal.remove();
+
+        Browser browser = browserThreadLocal.get();
+        if (browser != null) {
+            try { browser.close(); } catch (Throwable ignore) {}
+        }
+        browserThreadLocal.remove();
+
+        apiRequestThreadLocal.remove();
+        pageThreadLocal.remove();
+        scenarioNameThreadLocal.remove();
     }
 
     public static void setScenarioName(String name) {
@@ -231,6 +225,14 @@ public class PlaywrightConfig {
         return scenarioNameThreadLocal.get();
     }
 
+    // 🔨 утилита: вручную стереть сохранённый стейт (если вдруг включали)
+    public static void deleteStorageState() {
+        try {
+            if (Files.exists(STATE_PATH)) Files.delete(STATE_PATH);
+        } catch (Exception ignore) {}
+    }
+
+    // ---------- helpers ----------
     private static String pickWeighted(String[][] items, ThreadLocalRandom rnd) {
         int sum = 0;
         for (String[] it : items) sum += Integer.parseInt(it[1]);
@@ -241,6 +243,7 @@ public class PlaywrightConfig {
         }
         return items[0][0];
     }
+
     private static int choose(ThreadLocalRandom rnd, int[] values) {
         return values[rnd.nextInt(values.length)];
     }

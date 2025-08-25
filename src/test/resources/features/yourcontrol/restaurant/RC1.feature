@@ -1,5 +1,4 @@
 @RC1
-@YOUCONTROL
 
 Feature: Test
 
